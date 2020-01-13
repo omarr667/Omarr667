@@ -1,0 +1,717 @@
+
+LecturaPaquete=function(){
+  if(! require("xml2")) install.packages("xml2")
+  if(! require("tidyverse")) install.packages("tidyverse")
+  if(! require("lubridate")) install.packages("lubridate")
+}
+
+TypeInvoice <- function(str1){
+  num=substr(str1, nchar(str1)-2, nchar(str1))  
+  return(num)
+}
+
+decimalplaces <- function(x) {
+  if ((x %% 1) != 0) {
+    nchar(strsplit(sub('0+$', '', as.character(x)), ".", fixed=TRUE)[[1]][[2]])
+  } else {
+    return(0)
+  }
+}
+
+
+LecturaDatos=function(Direccion){
+  setwd(Direccion)
+  archivos=list.files()
+  Base=0
+  for(i in archivos){
+    if(TypeInvoice(i)=="xml"){
+      
+      x=tryCatch(read_xml(i),error=function(e) e, warning=function(w) w)
+      
+      if(is(x, "error")){
+        print(paste("La lectura del archivo xml ", i, " no fue exitosa, revisar el contenido del mismo"))
+      }else{
+        
+        #Encabezado
+        
+        Encabezado_carcateri=tryCatch(xml_attrs(xml_find_all(x, "//cfdi:Comprobante"), ns = character())[[1]],error=function(e) e, warning=function(w) w)
+        if(is(Encabezado_carcateri,"error")){
+          serie_nomina=folio_nomina=formaPago=version_nomina=fecha_nomina=subtotal=moneda=total=LugarExpedicion=NA
+        }else{
+          names(Encabezado_carcateri)=tolower(names(Encabezado_carcateri))
+          serie_nomina=as.character(Encabezado_carcateri["serie"]) #1 a 25 alfanumerico
+          folio_nomina=as.character(Encabezado_carcateri["folio"]) #1 a 40 alfanumerico
+          formaPago=as.numeric(Encabezado_carcateri["formapago"]) #01, 02, 03
+          version_nomina=as.numeric(Encabezado_carcateri["version"]) ##3.3 A partir de 2018
+          fecha_nomina=as.character(Encabezado_carcateri["fecha"]) #AAAA-MM-DDThh:mm:ss 2017-01-27T11:49:48
+          subtotal=as.numeric(Encabezado_carcateri["subtotal"]) #Mayor que 0, No debe tener 3 decimales o más
+          moneda=as.character(Encabezado_carcateri["moneda"]) #MXN o USD
+          total=as.numeric(Encabezado_carcateri["total"]) #total<=subtotal y no negativo
+          LugarExpedicion=as.character(Encabezado_carcateri["lugarexpedicion"]) #CP
+        }
+        
+        
+        #Emisor
+        Emisor_carcateri=tryCatch(xml_attrs(xml_find_all(x, "//cfdi:Emisor"), ns = character())[[1]],error=function(e) e, warning=function(w) w)
+        if(is(Emisor_carcateri,"error")){
+          rfc_emisor=nombre_emisor=regimnfiscal=NA
+        }else{
+          names(Emisor_carcateri)=tolower(names(Emisor_carcateri))
+          rfc_emisor=as.character(gsub("[:punct:]","", Emisor_carcateri["rfc"])) #Minimo 12
+          nombre_emisor=as.character(gsub("[:punct:]","", Emisor_carcateri["nombre"])) # 
+          regimnfiscal=as.character(Emisor_carcateri["regimenfiscal"]) #601, 602, 603
+        }
+        
+        #receptor
+        Receptor_carcateri=tryCatch(xml_attrs(xml_find_all(x, "//cfdi:Receptor"), ns = character())[[1]],error=function(e) e, warning=function(w) w)
+        if(is(Receptor_carcateri,"error")){
+          rfc_receptor=nombre_receptor=usocdfi_receptor=NA
+        }else{
+          names(Receptor_carcateri)=tolower(names(Receptor_carcateri))
+          rfc_receptor=as.character(gsub("[:punct:]","", Receptor_carcateri["rfc"]))
+          nombre_receptor=as.character(gsub("[:punct:]","", Receptor_carcateri["nombre"]))
+          usocdfi_receptor=as.character(gsub("[:punct:]","", Receptor_carcateri["usocfdi"])) #P01
+        }
+        
+        #Conceptos
+        
+        Concepto_carcateri=tryCatch(xml_attrs(xml_child(xml_find_all(x, "//cfdi:Conceptos")), ns = character()),error=function(e) e, warning=function(w) w)
+        if(is(Concepto_carcateri,"error")){
+          ClaveProdServ=cantidad=claveunidad=descripcion=importe=descuento=NA
+        }else{
+          names(Concepto_carcateri)=tolower(names(Concepto_carcateri))
+          ClaveProdServ=as.character(Concepto_carcateri["claveprodserv"])
+          cantidad=as.character(Concepto_carcateri["cantidad"])
+          claveunidad=as.character(Concepto_carcateri["claveunidad"]) #ACT
+          descripcion=as.character(Concepto_carcateri["descripcion"]) #
+          importe=as.character(Concepto_carcateri["importe"]) #0 a 6 decimales y positivos
+          descuento=as.character(Concepto_carcateri["Descuento"]) # 0 a 6 decimales y positivos
+        }
+        ###
+        complemento_nominda=tryCatch(xml_attrs(xml_find_all(xml_children(xml_find_all(x, "//cfdi:Complemento")), "//nomina12:Nomina"), ns = character())[[1]],error=function(e) e, warning=function(w) w)
+        if(is(complemento_nominda,"error")){
+          version_nomina_2=TipoNomina=FechaPago=fechainicialpago=fechafinalpago=numdiaspagados=totalpercepciones=totaldeducciones=totalotrospagos=NA
+        }else{
+          names(complemento_nominda)=tolower(names(complemento_nominda))
+          version_nomina_2=as.character(complemento_nominda["version"]) #1.2
+          TipoNomina=as.character(complemento_nominda["tiponomina"]) #O (ord) o E ext
+          FechaPago=as.character(complemento_nominda["fechapago"]) #aaaa-mm-dd d
+          fechainicialpago=as.character(complemento_nominda["fechainicialpago"])
+          fechafinalpago=as.character(complemento_nominda["fechafinalpago"])
+          numdiaspagados=as.character(complemento_nominda["numdiaspagados"])
+          totalpercepciones=as.character(complemento_nominda["totalpercepciones"])
+          totaldeducciones=as.character(complemento_nominda["totaldeducciones"])
+          totalotrospagos=as.character(complemento_nominda["totalotrospagos"])
+        }
+        
+        
+        
+        
+        ##Complemento Emisor
+        complemento_emisor=tryCatch(xml_attrs(xml_find_all(xml_children(xml_find_all(x, "//cfdi:Complemento")), "//nomina12:Emisor"), ns = character())[[1]],error=function(e) e, warning=function(w) w)
+        if(is(complemento_emisor,"error")){
+          RegistroPatronal=NA
+        }else{
+          names(complemento_emisor)=tolower(names(complemento_emisor))
+          RegistroPatronal=as.character(complemento_emisor["registropatronal"])  
+        }
+        
+        #Complemento Receptor
+        complemento_receptor=tryCatch(xml_attrs(xml_find_all(xml_children(xml_find_all(x, "//cfdi:Complemento")), "//nomina12:Receptor"), ns = character())[[1]],error=function(e) e, warning=function(w) w)
+        if(is(complemento_receptor,"error")){
+          numseguridadsocial=fechainiciorellaboral=antiguedad=TipoContrato=tiporegimen=numempleado=puesto=riesgopuesto=periodicidadpago=banco=salariobasecotapor=salariodiariointegrado=claveentfed=NA
+        }else{
+          names(complemento_receptor)=tolower(names(complemento_receptor))
+          numseguridadsocial=as.character(complemento_receptor["numseguridadsocial"])
+          fechainiciorellaboral=as.character(complemento_receptor["fechainiciorellaboral"])
+          TipoContrato=as.character(complemento_receptor["tipocontrato"])
+          tiporegimen=as.character(complemento_receptor["tiporegimen"])
+          numempleado=as.character(complemento_receptor["numempleado"]) #1 a15
+          puesto=as.character(complemento_receptor["puesto"])
+          riesgopuesto=as.character(complemento_receptor["riesgopuesto"])
+          periodicidadpago=as.character(complemento_receptor["periodicidadpago"])
+          banco=as.character(complemento_receptor["banco"])
+          salariobasecotapor=as.character(complemento_receptor["salariobasecotapor"])
+          salariodiariointegrado=as.character(complemento_receptor["salariodiariointegrado"])
+          claveentfed=as.character(complemento_receptor["claveentfed"])
+          names(complemento_receptor)=substr(names(complemento_receptor), 1,5)
+          antiguedad=as.character(complemento_receptor["antig"])
+        }
+        
+        ##Nomina Percepcion
+        complemento_percepcion=tryCatch(xml_attrs(xml_find_all(xml_children(xml_find_all(x, "//cfdi:Complemento")), "//nomina12:Percepciones"), ns = character())[[1]],error=function(e) e, warning=function(w) w)
+        if(is(complemento_percepcion,"error")){
+          totalgravado=totalexento=totalsueldos=NA
+        }else{
+          names(complemento_percepcion)=tolower(names(complemento_percepcion))
+          totalgravado=as.character(complemento_percepcion["totalgravado"])
+          totalexento=as.character(complemento_percepcion["totalexento"])
+          totalsueldos=as.character(complemento_percepcion["totalsueldos"])
+        }
+        
+        
+        #Nomina deducion
+        complemento_deduccion=tryCatch(xml_attrs(xml_find_all(xml_children(xml_find_all(x, "//cfdi:Complemento")), "//nomina12:Deducciones"), ns = character())[[1]],error=function(e) e, warning=function(w) w)
+        if(is(complemento_deduccion,"error")){
+          totalotrasdeducciones=totalimpuestosretenidos=NA
+        }else{
+          names(complemento_deduccion)=tolower(names(complemento_deduccion))
+          totalotrasdeducciones=as.character(complemento_deduccion["totalotrasdeducciones"])
+          totalimpuestosretenidos=as.character(complemento_deduccion["totalimpuestosretenidos"])
+        }
+        
+        
+        if(length(Base)==1){
+          Base=data.frame(i,serie_nomina,folio_nomina,formaPago,version_nomina,fecha_nomina,subtotal,moneda,total,LugarExpedicion,rfc_emisor,nombre_emisor,regimnfiscal,rfc_receptor,nombre_receptor,usocdfi_receptor,ClaveProdServ,cantidad,claveunidad,descripcion,importe,descuento,version_nomina_2,TipoNomina,FechaPago,fechainicialpago,fechafinalpago,numdiaspagados,totalpercepciones,totaldeducciones,totalotrospagos,RegistroPatronal,numseguridadsocial,fechainiciorellaboral,antiguedad,TipoContrato,tiporegimen,numempleado,puesto,riesgopuesto,periodicidadpago,banco,salariobasecotapor,salariodiariointegrado,claveentfed,totalgravado,totalexento,totalsueldos,totalotrasdeducciones,totalimpuestosretenidos)
+        }else{
+          base=data.frame(i, serie_nomina,folio_nomina,formaPago,version_nomina,fecha_nomina,subtotal,moneda,total,LugarExpedicion,rfc_emisor,nombre_emisor,regimnfiscal,rfc_receptor,nombre_receptor,usocdfi_receptor,ClaveProdServ,cantidad,claveunidad,descripcion,importe,descuento,version_nomina_2,TipoNomina,FechaPago,fechainicialpago,fechafinalpago,numdiaspagados,totalpercepciones,totaldeducciones,totalotrospagos,RegistroPatronal,numseguridadsocial,fechainiciorellaboral,antiguedad,TipoContrato,tiporegimen,numempleado,puesto,riesgopuesto,periodicidadpago,banco,salariobasecotapor,salariodiariointegrado,claveentfed,totalgravado,totalexento,totalsueldos,totalotrasdeducciones,totalimpuestosretenidos)
+          Base=rbind(Base, base)
+        }
+        
+        nombres=c("serie_nomina","folio_nomina","formaPago","version_nomina","fecha_nomina","subtotal","moneda","total","LugarExpedicion","rfc_emisor","nombre_emisor","regimnfiscal","rfc_receptor","nombre_receptor","usocdfi_receptor","ClaveProdServ","cantidad","claveunidad","descripcion","importe","descuento","version_nomina_2","TipoNomina","FechaPago","fechainicialpago","fechafinalpago","numdiaspagados","totalpercepciones","totaldeducciones","totalotrospagos","RegistroPatronal","numseguridadsocial","fechainiciorellaboral","antiguedad","TipoContrato","tiporegimen","numempleado","puesto","riesgopuesto","periodicidadpago","banco","salariobasecotapor","salariodiariointegrado","claveentfed","totalgravado","totalexento","totalsueldos","totalotrasdeducciones","totalimpuestosretenidos")
+        rm(list = nombres)
+      }
+    }else{
+      print(paste("El arhivo ", i, " no es un formato compatible"))
+    }
+  }    
+  colnames(Base)=c("Nombre Factura", "Serie","Folio","FormaPago","Version CFDI","Fecha","Subtotal","Moneda","Total","LugarExpedicion","rfc_emisor","nombre_emisor","RegimenFiscal","rfc_receptor","nombre_receptor","Uso de CFDI","ClaveProdServ","Cantidad","ClaveUnidad","Descripción","Importe","Descuento","Version Nomina","TipoNomina","FechaPago","Fecha Inicial Pago","FechaFinalPago","NumDiasPagados","Total Percepciones","Total Feducciones","Total Otros Pagos","Registro Patronal","Num Seguridad Social","Fecha Inicio Rel Laboral","Antiguedad","Tipo Contrato","Tipo Regimen","Num Empleado","Puesto","Riesgo Puesto","Periodicidad Pago","Banco","Salario Base Cotapor","Salario Diario Integrado","Clave Ent Fed","Total Gravado","Total Exento","Total Sueldos","Total Otras Deducciones","Total Impuestos Retenidos")
+  return(Base)
+  write.csv(Base, file="Facturas.csv")
+  
+}
+
+validacion_base=function(Base_user){
+  
+  ###
+  x=Base_user
+  ###
+  
+  names(x)=c("Nombre_Factura", "serie_nomina","folio_nomina","formaPago","version_nomina","fecha_nomina","subtotal","moneda","total","LugarExpedicion","rfc_emisor","nombre_emisor","regimnfiscal","rfc_receptor","nombre_receptor","usocdfi_receptor","ClaveProdServ","cantidad","claveunidad","descripcion","importe","descuento","version_nomina_2","TipoNomina","FechaPago","fechainicialpago","fechafinalpago","numdiaspagados","totalpercepciones","totaldeducciones","totalotrospagos","RegistroPatronal","numseguridadsocial","fechainiciorellaboral","antiguedad","TipoContrato","tiporegimen","numempleado","puesto","riesgopuesto","periodicidadpago","banco","salariobasecotapor","salariodiariointegrado","claveentfed","totalgravado","totalexento","totalsueldos","totalotrasdeducciones","totalimpuestosretenidos")
+  obs=dim(x)[1]
+  Base_error=as.character(x$"Nombre_Factura")
+  
+  error_serie_nomina=error_folio=error_forma_pago=error_version_nomina=error_fecha_nomina=error_subtotal_nomina=error_moneda_nomina=error_total_nomina=error_lugar_expedicion=error_rfc_emisor=error_rfc_receptor=error_nombre_emisor=error_nombre_receptor=error_regimen_fiscal=error_usocdfi_receptor=0
+  error_ClaveProdServ=error_cantidad=error_claveunidad=error_descripcion=error_importe=error_descuento=error_version_nomina_2=0
+  error_TipoNomina=error_FechaPago=0
+  error_fechainicialpago=error_fechafinalpago=0
+  
+  for(i in 1:obs){
+    #Serie nomina:  1 a 25 alfanumerico
+    
+    if(is.na(as.character(x$serie_nomina[i]))){
+      error_serie_nomina[i]="Var no encontrada"
+    }else{
+      longitud=nchar(as.character(x$serie_nomina[i]))
+      if(longitud>0 & longitud<=25){
+        error_serie_nomina[i]=NA
+      }else{
+        error_serie_nomina[i]="Longitud Var no adecuada" 
+      }
+    }
+    ###
+    #Folio:  1 a 40 alfanumerico
+    ###
+    if(is.na(as.character(x$folio_nomina[i]))){
+      error_folio[i]="Var no encontrada"
+    }else{
+      longitud=nchar(as.character(x$folio_nomina[i]))
+      if(longitud>0 & longitud<=40){
+        error_folio[i]=NA
+      }else{
+        error_folio[i]="Longitud Var no adecuada" 
+      }
+    }
+    ###
+    #formaPago: 01, 02, 03, FOrma Pago
+    ###
+    if(is.na(as.character(x$formaPago[i]))){
+      error_forma_pago[i]="Var no encontrada"
+    }else{
+      longitud=nchar(as.character(x$formaPago[i]))
+      if(longitud>0 & longitud<=2){
+        numero=tryCatch(as.numeric(x$formaPago[i]),error=function(e) e, warning=function(w) w)
+        if(is(numero,"Warning")){
+          error_forma_pago[i]="Forma de pago invalido"
+        }else{
+          error_forma_pago[i]=NA
+        }
+      }else{
+        error_forma_pago[i]="Forma de pago invalido"
+      }
+    }
+    ####
+    ##version_CFDI
+    ####
+    anio=tryCatch(as.numeric(substr(x$fecha_nomina, 1,4)),error=function(e) e, warning=function(w) w)
+      
+    if(is.na(as.character(x$version_nomina[i]))){
+      error_version_nomina[i]="Var no encontrada"
+    }else{
+      numero=tryCatch(as.numeric(x$formaPago[i]),error=function(e) e, warning=function(w) w)
+      if(is(numero,"Warning")){
+        error_version_nomina[i]="Formato no valido"
+      }else{
+        if(anio[i]>=2018){
+          if(x$version_nomina[i]==3.3){
+            error_version_nomina[i]=NA
+          }else{
+            error_version_nomina[i]="Versión debe ser 3.3"
+          }
+        }else{
+          if(x$version_nomina[i]<=3.3){
+            error_version_nomina[i]=NA
+          }else{
+            error_version_nomina[i]="Versión debe ser menor a 3.3"
+          }
+        }  
+      }
+    }
+    
+    ####
+    ##fecha AAAA-MM-DDThh:mm:ss 2017-01-27T11:49:48
+    ####
+    #anio=as.numeric(substr(x$fecha_nomina, 1,4))
+    #mes=as.numeric(substr(x$fecha_nomina, 6,7))
+    #dia=as.numeric(substr(x$fecha_nomina, 9,10))
+    #TimeZOne=substr(x$fecha_nomina, 11,11)
+    #Hora=as.numeric(substr(x$fecha_nomina, 12,13))
+    #minutos=substr(x$fecha_nomina, 15,16)
+    #segundos=substr(x$fecha_nomina, 18,19)
+    DateToday=Sys.Date()
+    
+    
+    if(is.na(as.character(x$fecha_nomina[i]))){
+      error_fecha_nomina[i]="Var no encontrada"
+    }else{
+      DateInvoice=tryCatch(as.Date(substr(x$fecha_nomina[i], 1,10)),error=function(e) e, warning=function(w) w)
+      if(is(DateInvoice,"error")){
+        error_fecha_nomina[i]="Formato no valido"
+      }else{
+        anio=tryCatch(as.numeric(substr(x$fecha_nomina, 1,4)),error=function(e) e, warning=function(w) w)
+        if(is(anio[i],"error")){
+          error_fecha_nomina[i]="Formato no valido"
+        }else{
+          if(DateInvoice<=DateToday){
+            Ts=tryCatch(as.character(substr(x$fecha_nomina[i], 11,11)),error=function(e) e, warning=function(w) w)
+            if(is(Ts,"error")){
+              error_fecha_nomina[i]="Hace Falta zona horaria"
+            }else{
+              if(Ts=="T"){
+                error_fecha_nomina[i]=NA
+              }else{
+                error_fecha_nomina[i]="Error en zona horaria"
+              }
+            }
+          }else{
+            error_fecha_nomina[i]="Formato no valido"
+          }
+        }
+      }
+    }
+    #####
+    ##Subtotal
+    ####
+    Subtotal=tryCatch(as.numeric(x$subtotal),error=function(e) e, warning=function(w) w)
+  
+    
+    if(is.na(as.character(x$version_nomina[i]))){
+      error_subtotal_nomina[i]="Var no encontrada"
+    }else{
+      if(is(Subtotal[i],"warning")){
+        error_subtotal_nomina[i]="No es un número"
+      }else{
+        if(Subtotal[i]>=0){
+          if(decimalplaces(Subtotal[i])<3){
+            error_subtotal_nomina[i]=NA
+          }else{
+            error_subtotal_nomina[i]="Tiene más de los decimales permitidos"
+          }
+        }else{
+          error_subtotal_nomina[i]="Cantidad Negativa"
+        }
+      }
+    }
+    #####
+    ##moneda
+    ####
+    
+    moneda=as.character(x$moneda[i])
+    if(is.na(moneda)){
+      error_moneda_nomina[i]="Var no encontrada"
+    }else{
+      if(moneda %in% c('USD', 'MXN')){
+        error_moneda_nomina[i]=NA
+      }else{
+        error_moneda_nomina[i]='Moneda no encontrada'
+      }
+    }  
+    #####
+    ##total
+    ####
+    
+    
+    total=tryCatch(as.numeric(x$total),error=function(e) e, warning=function(w) w)
+    
+    
+    if(is.na(as.character(x$total[i]))){
+      error_total_nomina[i]="Var no encontrada"
+    }else{
+      if(is(total[i],"warning")){
+        error_total_nomina[i]="No es un número"
+      }else{
+        if(total[i]>=0){
+          if(decimalplaces(total[i])<3){
+            error_total_nomina[i]=NA
+          }else{
+            error_total_nomina[i]="Tiene más de los decimales permitidos"
+          }
+        }else{
+          error_total_nomina[i]="Cantidad Negativa"
+        }
+      }
+    }
+    
+    ##########
+    ##LugarExpedicion #CP
+    ##########
+    
+    LugarExpedicion=tryCatch(as.numeric(as.character(x$LugarExpedicion[i])),error=function(e) e, warning=function(w) w)
+    
+    if(is.na(as.character(x$LugarExpedicion[i]))){
+      error_lugar_expedicion[i]="Var no encontrada"
+    }else{
+      if(is(LugarExpedicion,"warning")){
+        error_lugar_expedicion[i]="No es un CP adecuado"
+      }else{
+        error_lugar_expedicion[i]=NA
+      }
+    }
+    
+    ############
+    ##RFC emisor
+    ############
+    
+    rfc_emisor=tryCatch(as.character(x$rfc_emisor[i]),error=function(e) e, warning=function(w) w)
+    
+    if(is.na(as.character(rfc_emisor))){
+      error_rfc_emisor[i]="Var no encontrada"
+    }else{
+      num=nchar(rfc_emisor)
+      if(num==12 | num ==13){
+        error_rfc_emisor[i]=NA
+      }else{
+        error_rfc_emisor[i]='RFC Incorrecto'
+      }
+    }
+      
+    ############
+    ##RFC receptor
+    ############
+    
+    rfc_receptor=tryCatch(as.character(x$rfc_receptor[i]),error=function(e) e, warning=function(w) w)
+    
+    if(is.na(as.character(rfc_receptor))){
+      error_rfc_receptor[i]="Var no encontrada"
+    }else{
+      num=nchar(rfc_receptor)
+      if(num==12 | num ==13){
+        error_rfc_receptor[i]=NA
+      }else{
+        error_rfc_receptor[i]='RFC Incorrecto'
+      }
+    }
+    
+    ############
+    ##Nombre emisor
+    ############
+    
+    if(is.na(as.character(x$nombre_emisor[i]))){
+      error_nombre_emisor[i]="Var no encontrada"
+    }else{
+      error_nombre_emisor[i]=NA
+    }
+    
+    ############
+    ##Nombre receptor
+    ############
+   
+    if(is.na(as.character(x$nombre_receptor[i]))){
+      error_nombre_receptor[i]="Var no encontrada"
+    }else{
+      error_nombre_receptor[i]=NA
+    }
+    
+  
+    ##########
+    ##regimnfiscal 
+    ##########
+    
+    regimnfiscal=tryCatch(as.numeric(as.character(x$regimnfiscal[i])),error=function(e) e, warning=function(w) w)
+    
+    if(is.na(as.character(x$regimnfiscal[i]))){
+      error_regimen_fiscal[i]="Var no encontrada"
+    }else{
+      if(is(regimnfiscal,"warning")){
+        error_regimen_fiscal[i]="No es un regimen adecuado"
+      }else{
+        error_regimen_fiscal[i]=NA
+      }
+    }
+    
+    ##########
+    ##usocdfi_receptor
+    ##########
+    
+    
+    usocdfi_receptor=tryCatch(as.character(x$usocdfi_receptor[i]),error=function(e) e, warning=function(w) w)
+    
+    if(is.na(as.character(x$usocdfi_receptor[i]))){
+      error_usocdfi_receptor[i]="Var no encontrada"
+    }else{
+      if(is(usocdfi_receptor,"warning")){
+        error_usocdfi_receptor[i]="No es un regimen adecuado"
+      }else{
+        error_usocdfi_receptor[i]=NA
+      }
+    }
+    error_usocdfi_receptor
+    
+    ############
+    ##Clave Product
+    ############
+    ClaveProdServ=tryCatch(as.numeric(as.character(x$ClaveProdServ[i])),error=function(e) e, warning=function(w) w)
+    
+    if(is.na(as.character(x$ClaveProdServ[i]))){
+      error_ClaveProdServ[i]="Var no encontrada"
+    }else{
+      if(is(ClaveProdServ,"warning")){
+        error_ClaveProdServ[i]="No es una clave producto adecuada"
+      }else{
+        error_ClaveProdServ[i]=NA
+      }
+    }
+    
+    ############
+    ##cantidad
+    ############
+    cantidad=tryCatch(as.numeric(as.character(x$cantidad[i])),error=function(e) e, warning=function(w) w)
+    
+    if(is.na(as.character(x$cantidad[i]))){
+      error_cantidad[i]="Var no encontrada"
+    }else{
+      if(is(cantidad,"warning")){
+        error_cantidad[i]="No es una cantidad adecuada"
+      }else{
+        error_cantidad[i]=NA
+      }
+    }
+    
+    ############
+    ##claveunidad
+    ############
+    
+    
+    claveunidad=tryCatch(as.character(x$claveunidad[i]),error=function(e) e, warning=function(w) w)
+    
+    if(is.na(as.character(x$claveunidad[i]))){
+      error_claveunidad[i]="Var no encontrada"
+    }else{
+      if(claveunidad =='ACT'){
+        error_claveunidad[i]=NA
+      }else{
+        error_claveunidad[i]='Unidad incorrecta'
+      }
+    }
+    
+    ######
+    ##descripcion
+    ########
+    
+    descripcion=tryCatch(as.character(x$descripcion[i]),error=function(e) e, warning=function(w) w)
+    
+    if(is.na(as.character(x$descripcion[i]))){
+      error_descripcion[i]="Var no encontrada"
+    }else{
+      if(is(descripcion,"warning")){
+        error_descripcion[i]="No es un descripcion adecuado"
+      }else{
+        error_descripcion[i]=NA
+      }
+    }
+    
+    #####
+    ##importe
+    ####
+    
+    
+    importe=tryCatch(as.numeric(x$importe),error=function(e) e, warning=function(w) w)
+    
+    
+    if(is.na(as.character(x$importe[i]))){
+      error_importe[i]=NA
+    }else{
+      if(is(importe[i],"warning")){
+        error_importe[i]="No es un número"
+      }else{
+        if(importe[i]>=0){
+          if(decimalplaces(importe[i])<3){
+            error_importe[i]=NA
+          }else{
+            error_importe[i]="Tiene más de los decimales permitidos"
+          }
+        }else{
+          error_importe[i]="Cantidad Negativa"
+        }
+      }
+    }
+    
+    
+    #####
+    ##descuento
+    ####
+    
+    
+    descuento=tryCatch(as.numeric(x$descuento),error=function(e) e, warning=function(w) w)
+    
+    
+    if(is.na(as.character(x$descuento[i]))){
+      error_descuento[i]=NA
+    }else{
+      if(is(descuento[i],"warning")){
+        error_descuento[i]="No es un número"
+      }else{
+        if(descuento[i]>=0){
+          if(decimalplaces(descuento[i])<3){
+            error_descuento[i]=NA
+          }else{
+            error_descuento[i]="Tiene más de los decimales permitidos"
+          }
+        }else{
+          error_descuento[i]="Cantidad Negativa"
+        }
+      }
+    }
+    
+    
+    
+  
+    ############
+    ##claveunidad
+    ############
+    
+    
+    claveunidad=tryCatch(as.character(x$claveunidad[i]),error=function(e) e, warning=function(w) w)
+    
+    if(is.na(as.character(x$claveunidad[i]))){
+      error_claveunidad[i]="Var no encontrada"
+    }else{
+      if(claveunidad =='ACT'){
+        error_claveunidad[i]=NA
+      }else{
+        error_claveunidad[i]='Unidad incorrecta'
+      }
+    }
+    
+    ############
+    ##version_nomina_2
+    ############
+    
+    
+    version_nomina_2=tryCatch(as.character(x$version_nomina_2[i]),error=function(e) e, warning=function(w) w)
+    
+    if(is.na(as.character(x$version_nomina_2[i]))){
+      error_version_nomina_2[i]="Var no encontrada"
+    }else{
+      if(version_nomina_2 =='1.2'){
+        error_version_nomina_2[i]=NA
+      }else{
+        error_version_nomina_2[i]='Unidad incorrecta'
+      }
+    }
+    
+    ############
+    ##TipoNomina
+    ############
+    
+    
+    TipoNomina=tryCatch(as.character(x$TipoNomina[i]),error=function(e) e, warning=function(w) w)
+    
+    if(is.na(as.character(x$TipoNomina[i]))){
+      error_TipoNomina[i]="Var no encontrada"
+    }else{
+      if(TipoNomina %in% c('O', 'E')){
+        error_TipoNomina[i]=NA
+      }else{
+        error_TipoNomina[i]='Unidad incorrecta'
+      }
+    }
+    ######
+    ##FechaPago
+    ########
+   
+    FechaPago=tryCatch(as.Date(x$FechaPago[i]),error=function(e) e, warning=function(w) w)
+    
+    if(is.na(as.character(x$FechaPago[i]))){
+      error_FechaPago[i]="Var no encontrada"
+    }else{
+      if(is(FechaPago,"error")){
+        error_FechaPago[i]="No es una FechaPago adecuado"
+      }else{
+        error_FechaPago[i]=NA
+      }
+    }
+    
+    ######
+    ##fechainicialpago
+    ########
+    
+    fechainicialpago=tryCatch(as.Date(x$fechainicialpago[i]),error=function(e) e, warning=function(w) w)
+    
+    if(is.na(as.character(x$fechainicialpago[i]))){
+      error_fechainicialpago[i]="Var no encontrada"
+    }else{
+      if(is(fechainicialpago,"error")){
+        error_fechainicialpago[i]="No es una fechainicialpago adecuado"
+      }else{
+        error_fechainicialpago[i]=NA
+      }
+    }
+    
+    ######
+    ## fechafinalpago
+    ########
+    
+    fechafinalpago=tryCatch(as.Date(x$fechafinalpago[i]),error=function(e) e, warning=function(w) w)
+    
+    if(is.na(as.character(x$fechafinalpago[i]))){
+      error_fechafinalpago[i]="Var no encontrada"
+    }else{
+      if(is(fechafinalpago,"error")){
+        error_fechafinalpago[i]="No es una fechafinalpago adecuado"
+      }else{
+        error_fechafinalpago[i]=NA
+      }
+    }
+    
+    
+  }
+  
+  
+  Base_error=cbind(Base_error, error_serie_nomina, error_folio, error_forma_pago,error_version_nomina,error_fecha_nomina,error_subtotal_nomina,error_moneda_nomina,error_total_nomina,error_lugar_expedicion,error_rfc_emisor,error_rfc_receptor,error_nombre_emisor,error_nombre_receptor, error_regimen_fiscal,error_usocdfi_receptor,error_ClaveProdServ, error_cantidad,error_claveunidad, error_descripcion,error_importe,error_descuento,error_version_nomina_2,error_TipoNomina,error_FechaPago,error_fechainicialpago,error_fechafinalpago
+  )
+}
+
+
+
+
+
+#tiempo=proc.time()
+#Base=LecturaDatos("C:/Users/suma12/Desktop/Facturas_nomina/resumen/Resumen")
+#Base=LecturaDatos("C:/Users/suma12/Desktop/Facturas_nomina/resumen")
+#proc.time()-tiempo
+
+
+
+#View(Base)
+#View(Base_error)
